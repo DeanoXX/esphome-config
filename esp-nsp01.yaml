@@ -19,9 +19,6 @@ time:
   - platform: homeassistant
     id: homeassistant_time
 
-api:
-  id: api_server
-
 logger:
   on_message:
     level: DEBUG
@@ -115,22 +112,34 @@ rtttl:
   id: ${switch_id}_buzzer
   output: ${switch_id}_buzzer_out
 
+api:
+  services:
+    - service: send_json
+      variables:
+        my_type: int
+        my_json: string
+      then:
+        - lambda: 'id(nspanel1).send_json_command_(my_type,my_json);'
+
 switch:
+  # Restart Switch in HA
+  - platform: restart
+    name: "${switch_id} Restart"
   - platform: gpio
     # Panel Left Hand relay
-    name: Relay 1
+    name: ${switch_id} Relay 1
     id: ${switch_id}_relay_1
     pin:
       number: 22
   - platform: gpio
     # Panel Right Hand relay
-    name: Relay 2
+    name: ${switch_id} Relay 2
     id: ${switch_id}_relay_2
     pin:
       number: 19
   - platform: gpio
     # Panel Screen Power
-    name: Screen Power
+    name: ${switch_id} Screen Power
     id: ${switch_id}_screen_power
     entity_category: config
     pin:
@@ -157,7 +166,7 @@ switch:
 
   - platform: template
     # Template switch to enable/disable screen dimming
-    name: NSPanel Energy Saving Mode
+    name: ${switch_id} Energy Saving Mode
     id: ${switch_id}_eco_mode
     entity_category: config
     restore_state: true
@@ -167,7 +176,7 @@ binary_sensor:
 # NS Panel Hard Switches
   - platform: gpio
     id: ${switch_id}_button_1
-    name: Left Button
+    name: ${switch_id} Left Button
     pin:
       number: 14
       inverted: true
@@ -176,7 +185,7 @@ binary_sensor:
 
   - platform: gpio
     id: ${switch_id}_button_2
-    name: Right Button
+    name: ${switch_id} Right Button
     pin:
       number: 27
       inverted: true
@@ -213,6 +222,13 @@ binary_sensor:
         - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"id\":\"plug_09\",\"params\":{\"switch\":\"off\"}}");'
 
 sensor:
+# Extra sensor to keep track of plug uptime
+  - platform: uptime
+    name: ${switch_id} Uptime Sensor
+# Wifi Signal
+  - platform: wifi_signal
+    name: "${switch_id} WiFi Signal Sensor"
+    update_interval: 60s
 # nspanel related temperature sensors
   - platform: adc
     id: ${switch_id}_ntc_source
@@ -233,7 +249,7 @@ sensor:
       b_constant: 3950
       reference_temperature: 25°C
       reference_resistance: 10kOhm
-    name: "${friendly_name} Temperature"
+    name: "${switch_id} Temperature"
     
 # Home Assistant Light State Sensors to update panel
   - platform: homeassistant
@@ -255,10 +271,10 @@ sensor:
   - platform: homeassistant
     # Thermostat set temp
     id: climate_temp
-    name: Climate Temp
+    name: ${switch_id} Climate Temp
     entity_id: climate.shed
     attribute: temperature
-    internal: false
+    internal: true
     # Update panel thermostat on change (16 to 31) only valid for celcius
     # Converted to Integer before send.
     on_value:
@@ -272,7 +288,7 @@ sensor:
 text_sensor:
   - platform: template
     # nspanel comeplete log messages - Text is passed from "on_log" event
-    name: "NSPanel Return String (Log)"
+    name: "${switch_id} NSPanel Return String (Log)"
     internal: true
     id: nsp_return_message
     lambda: |-
@@ -294,14 +310,14 @@ text_sensor:
 
   - platform: template
     # nspanel JSON message type Text
-    name: "NSPanel Return Type"
+    name: "${switch_id} NSPanel Return Type"
     id: nsp_return_type
     lambda: |-
       return {};
     update_interval: 60s
   - platform: template
     # nspanel JSON message text
-    name: "NSPanel Return JSON"
+    name: "${switch_id} NSPanel Return JSON"
     id: nsp_return_json
     lambda: |-
       return {};
@@ -514,11 +530,16 @@ script:
           if (id(wled_test_light).state) {
             int i_brightness = int(id(wled_test_bright).state / 255 * 100); 
             std::string s = id(wled_test_rgb).state;
+            std::string r = "255";
+            std::string g = "0";
+            std::string b = "0";
             int p1 = s.find(",");
-            int p2 = s.find(",",p1+1);
-            std::string r = s.substr(1, p1-1).erase(0,s.find_first_not_of(" ")); 
-            std::string g = s.substr(p1+2,p2-p1-2).erase(0,s.find_first_not_of(" ")); 
-            std::string b = s.substr(p2+2,s.length()-2).erase(0,s.find_first_not_of(" ")); 
+            if (p1 > 0) {
+                int p2 = s.find(",",p1+1);
+                std::string r = s.substr(1, p1-1).erase(0,s.find_first_not_of(" ")); 
+                std::string g = s.substr(p1+2,p2-p1-2).erase(0,s.find_first_not_of(" ")); 
+                std::string b = s.substr(p2+2,s.length()-2).erase(0,s.find_first_not_of(" ")); 
+            }
             id(nspanel1).send_json_command_(0x86,"{\"id\":\"wled_test\",\"params\":{\"switch\":\"on\",\"light_type\":1,\"mode\":1,\"bright\":" + to_string(i_brightness) + ",\"colorR\":" + to_string(r) + ",\"colorG\":" + to_string(g) + ",\"colorB\":" + to_string(b) + "}}");
           } else {
             id(nspanel1).send_json_command_(0x86,"{\"id\":\"wled_test\",\"params\":{\"switch\":\"off\"}}");
