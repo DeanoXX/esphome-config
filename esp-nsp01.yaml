@@ -1,0 +1,682 @@
+esphome:
+  name: esp-nsp01
+  comment: Sonoff NSPanel 01 - Location TBA
+
+esp32:
+  board: esp32dev
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: 192.168.1.158
+    gateway: 192.168.1.254
+    subnet: 255.255.255.0
+    dns1: 8.8.8.8
+    dns2: 192.168.1.254
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+api:
+  id: api_server
+
+logger:
+  on_message:
+    level: DEBUG
+    then:
+      # Detect JSON messages from NSPanel and pass to Text Sensor to action
+      lambda: |-
+        std::string message1 = message;
+        std::size_t pos1 = message1.find("PAYLOAD");
+        if (pos1 != std::string::npos)
+          {
+          id(nsp_return_message).publish_state(message);
+          }
+
+ota:
+
+web_server:
+
+# HTTP Request component needed for wttr.in weather web query
+http_request:
+  useragent: esphome/device
+  timeout: 5s
+
+substitutions:
+# Unique ID for Sensors.
+  switch_id: "nsp01"
+  friendly_name: "NSPanel 01"
+
+uart:
+  tx_pin: 16
+  rx_pin: 17
+  baud_rate: 115200
+
+# Use Local modified NSPanel component
+external_components:
+#  - source: github://pr#2702
+#    components: ["nspanel"]
+  - source: 
+      type: local
+      path: components
+    components: ["nspanel"]
+
+# Global variables for passing values from Lambda to Scripts for HA Service calls
+globals:
+   - id: g_rgb_r
+     type: int
+     restore_value: no
+     initial_value: '0'
+   - id: g_rgb_g
+     type: int
+     restore_value: no
+     initial_value: '0'
+   - id: g_rgb_b
+     type: int
+     restore_value: no
+     initial_value: '0'
+   - id: g_brightness
+     type: int
+     restore_value: no
+     initial_value: '0'
+   - id: g_temperature
+     type: int
+     restore_value: no
+     initial_value: '0'
+
+# Update Weather Hourly
+interval:
+  - interval: 60min
+    then:
+       - script.execute: nspanel_weather
+
+# NSPanel Component for access to panel.
+# Updates temperature, date, time, Relay indicators
+# Provides JSON interface to panel
+nspanel:
+  id: nspanel1
+  time_id: homeassistant_time
+  temperature: ${switch_id}_temperature
+  eco_mode_switch: ${switch_id}_eco_mode
+  screen_power_switch: ${switch_id}_screen_power
+  relays:
+    - ${switch_id}_relay_1
+    - ${switch_id}_relay_2
+
+output:
+  - platform: ledc
+    id: ${switch_id}_buzzer_out
+    pin:
+      number: 21
+
+rtttl:
+  id: ${switch_id}_buzzer
+  output: ${switch_id}_buzzer_out
+
+switch:
+  - platform: gpio
+    # Panel Left Hand relay
+    name: Relay 1
+    id: ${switch_id}_relay_1
+    pin:
+      number: 22
+  - platform: gpio
+    # Panel Right Hand relay
+    name: Relay 2
+    id: ${switch_id}_relay_2
+    pin:
+      number: 19
+  - platform: gpio
+    # Panel Screen Power
+    name: Screen Power
+    id: ${switch_id}_screen_power
+    entity_category: config
+    pin:
+      number: 4
+      inverted: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      # Initiliase Screen - These timings could be more aggressive
+      then:
+        - delay: 6s
+        - script.execute: nspanel_init
+        - delay: 3s
+        - script.execute: nspanel_weather
+          # Must send Wifi State for widgets to update (particulalry after power-on of screen only
+          # code taken from within NSPanel component code
+        - lambda: |-
+            uint8_t rssi = 0;
+            rssi = (wifi::global_wifi_component->wifi_rssi() * -1) / 20.0f;
+            std::string json_str = json::build_json([rssi](JsonObject &root) {
+              root["wifiState"] = "connected";
+              root["rssiLevel"] = rssi;
+            });
+            id(nspanel1).send_json_command_(0x85, json_str);
+
+  - platform: template
+    # Template switch to enable/disable screen dimming
+    name: NSPanel Energy Saving Mode
+    id: ${switch_id}_eco_mode
+    entity_category: config
+    restore_state: true
+    optimistic: true
+    
+binary_sensor:
+# NS Panel Hard Switches
+  - platform: gpio
+    id: ${switch_id}_button_1
+    name: Left Button
+    pin:
+      number: 14
+      inverted: true
+    on_click:
+      - switch.toggle: ${switch_id}_relay_1
+
+  - platform: gpio
+    id: ${switch_id}_button_2
+    name: Right Button
+    pin:
+      number: 27
+      inverted: true
+    on_click:
+      - switch.toggle: ${switch_id}_relay_2
+# HA Tracking sensors for device states
+# Update nspanel on state change
+  - platform: homeassistant
+    id: dim_09_light
+    entity_id: light.dim_09_light
+    on_press:
+      then:
+        - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"id\":\"light7\",\"params\":{\"switch\":\"on\"}}");'
+    on_release:
+      then:
+        - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"id\":\"light7\",\"params\":{\"switch\":\"off\"}}");'
+  - platform: homeassistant
+    id: wled_test_light
+    entity_id: light.wled_test
+    on_press:
+      then:
+        - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"id\":\"wled_test\",\"params\":{\"switch\":\"on\"}}");'
+    on_release:
+      then:
+        - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"id\":\"wled_test\",\"params\":{\"switch\":\"off\"}}");'
+  - platform: homeassistant
+    id: plug_09_switch
+    entity_id: switch.plug_09_relay_1
+    on_press:
+      then:
+        - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"id\":\"plug_09\",\"params\":{\"switch\":\"on\"}}");'
+    on_release:
+      then:
+        - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"id\":\"plug_09\",\"params\":{\"switch\":\"off\"}}");'
+
+sensor:
+# nspanel related temperature sensors
+  - platform: adc
+    id: ${switch_id}_ntc_source
+    pin: 38
+    update_interval: 60s
+    attenuation: 11db
+
+  - platform: resistance
+    id: ${switch_id}_resistance_sensor
+    sensor: ${switch_id}_ntc_source
+    configuration: DOWNSTREAM
+    resistor: 11.2kOhm
+
+  - platform: ntc
+    id: ${switch_id}_temperature
+    sensor: ${switch_id}_resistance_sensor
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 10kOhm
+    name: "${friendly_name} Temperature"
+    
+# Home Assistant Light State Sensors to update panel
+  - platform: homeassistant
+    # Light light.dim_09_light brightness (0-255)
+    id: dim_09_light_bright
+    entity_id: light.dim_09_light
+    attribute: brightness
+    on_value:
+      then:
+        - script.execute: ha_dim_09_light_update
+  - platform: homeassistant
+    # Light light.wled_test brightness (0-255)
+    id: wled_test_bright
+    entity_id: light.wled_test
+    attribute: brightness
+    on_value:
+      then:
+        - script.execute: ha_wled_test_update
+  - platform: homeassistant
+    # Thermostat set temp
+    id: climate_temp
+    name: Climate Temp
+    entity_id: climate.shed
+    attribute: temperature
+    internal: false
+    # Update panel thermostat on change (16 to 31) only valid for celcius
+    # Converted to Integer before send.
+    on_value:
+      then:
+        - lambda: |-
+            if ((int) id(climate_temp).state > 15 && (int) id(climate_temp).state < 32) {
+              id(nspanel1).send_json_command_(0x84,"{\"ATCExpect0\":" + to_string((int) id(climate_temp).state) + "}");
+            }
+
+# Text Sensors for holding/acting on Strings
+text_sensor:
+  - platform: template
+    # nspanel comeplete log messages - Text is passed from "on_log" event
+    name: "NSPanel Return String (Log)"
+    internal: true
+    id: nsp_return_message
+    lambda: |-
+      return {};
+    update_interval: 60s
+    #Verify JSON content in Log message, split and update Type/JSON text sensores
+    on_value:
+      then:
+        - lambda: |-
+            std::string message = id(nsp_return_message).state;
+            std::size_t pos1 = message.find("Type");
+            std::size_t pos2 = message.find(" PAYLOAD");
+            std::size_t pos3 = message.find(" RAW");
+            if (pos1 != std::string::npos && pos2 != std::string::npos && pos3 != std::string::npos)
+              {
+              id(nsp_return_type).publish_state(message.substr(pos1+5,pos2-pos1-5));
+              id(nsp_return_json).publish_state(message.substr(pos2+9,pos3-pos2-9));
+              }
+
+  - platform: template
+    # nspanel JSON message type Text
+    name: "NSPanel Return Type"
+    id: nsp_return_type
+    lambda: |-
+      return {};
+    update_interval: 60s
+  - platform: template
+    # nspanel JSON message text
+    name: "NSPanel Return JSON"
+    id: nsp_return_json
+    lambda: |-
+      return {};
+    update_interval: 60s
+    # section to take JSON messages from NSPanel (GUI button presses) and update HA
+    # Cant get direct HA service calls working from Lambda, so variables (globals/text sensors) set and HA Services called via scripts
+    on_value:
+      then:
+        - logger.log: "JSON text Updated"
+        - lambda: |-
+            std::string message = id(nsp_return_json).state;
+            std::string type = id(nsp_return_type).state;
+            std::string rgb_r,rgb_g,rgb_b;
+            float brightness;
+            
+            // Define JSON Object to take received message
+            DynamicJsonBuffer doc(2000);
+            JsonObject& root = doc.parseObject(message);
+            if (type == "0x86") {
+              // Device Type Message
+                // Device ID Light 7 (Widget 1) HA Entity: light.dim_09_light
+                if (root.containsKey("id") && strcasecmp(root["id"], "light7") == 0) {  
+                  JsonObject& params = root["params"];
+                  if (params.containsKey("switch")) {
+                    if(params["switch"] == "on") {
+                      id(ha_service_name).publish_state("light.turn_on");
+                    }
+                    if(params["switch"] == "off") {
+                      id(ha_service_name).publish_state("light.turn_off");
+                    }
+                    id(ha_service_entityid).publish_state("light.dim_09_light");
+                    id(ha_service1).execute();
+                  }
+                  else if(params.containsKey("white")) { 
+                    JsonObject& white = params["white"];
+                    id(ha_service_name).publish_state("light.turn_on");
+                    id(ha_service_entityid).publish_state("light.dim_09_light");
+                    id(g_brightness) = int(white["br"].as<float>() / 100 * 255);
+                    id(text_g_brightness).publish_state(to_string(id(g_brightness))); 
+                    id(ha_service2).execute();
+                  }
+                }
+                
+                // Device ID wled_test (Widget 2) HA Entity: light.wled_test
+                if (root.containsKey("id") && strcasecmp(root["id"], "wled_test") == 0) {  
+                  JsonObject& params = root["params"];
+                  if (params.containsKey("bright")) {
+                    id(ha_service_name).publish_state("script.set_light_on_rgb");
+                    id(ha_service_entityid).publish_state("light.wled_test");
+                    id(g_brightness) = int(params["bright"].as<float>() / 100 * 255); 
+                    // Text Sensor used for debugging (logs dont work in events triggered from "on_message"
+                    id(text_g_brightness).publish_state(to_string(id(g_brightness))); 
+                    id(g_rgb_r) = params["colorR"];
+                    id(g_rgb_g) = params["colorG"];
+                    id(g_rgb_b) = params["colorB"];
+                    id(ha_service3).execute();
+                  }
+                  else if (params.containsKey("switch")) {
+                    if(params["switch"] == "on") {
+                      id(ha_service_name).publish_state("light.turn_on");
+                    }
+                    else if(params["switch"] == "off") {
+                      id(ha_service_name).publish_state("light.turn_off");
+                    }
+                    id(ha_service_entityid).publish_state("light.wled_test");
+                    id(ha_service1).execute();
+                  }
+                }
+   
+                // Device ID Plug_09 (Widget 3) HA Entity: switch.plug_09
+                if (root.containsKey("id") && strcasecmp(root["id"], "plug_09") == 0) {  
+                  JsonObject& params = root["params"];
+                  if (params.containsKey("switch")) {
+                    if(params["switch"] == "on") {
+                      id(ha_service_name).publish_state("switch.turn_on");
+                      id(ha_service_entityid).publish_state("switch.plug_09_relay_1");
+                    }
+                    if(params["switch"] == "off") {
+                      id(ha_service_name).publish_state("switch.turn_off");
+                      id(ha_service_entityid).publish_state("switch.plug_09_relay_1");
+                    }
+                    id(ha_service1).execute();
+                  }
+                }
+            } else if (type == "0x84") {
+               // Thermostat Messages
+               if (root.containsKey("ATCEnable") && root["ATCEnable"] == 0) {
+                 id(ha_service_name).publish_state("climate.turn_off");
+                 id(ha_service_entityid).publish_state("climate.shed");
+                 id(ha_service1).execute();
+               }
+               else if (root.containsKey("ATCEnable") && root["ATCEnable"] == 1) {
+                 id(ha_service_name).publish_state("climate.turn_on");
+                 id(ha_service_entityid).publish_state("climate.shed");
+                 id(ha_service1).execute();
+               }
+               if (root.containsKey("ATCExpect0")) {
+                 id(ha_service_name).publish_state("climate.set_temperature");
+                 id(ha_service_entityid).publish_state("climate.shed");
+                 id(g_temperature) = root["ATCExpect0"];
+                 if (id(g_temperature) != 0) { id(ha_service4).execute();}
+               }
+            }
+# Text Sensors to hold variables for scripts (panel -> HA)
+# set internal:false to see via web
+
+  - platform: template
+    name: "HA Service Name"
+    internal: true
+    id: ha_service_name
+    lambda: |-
+      return {};
+    update_interval: 60s
+  - platform: template
+    name: "HA Service Entity"
+    internal: true
+    id: ha_service_entityid
+    lambda: |-
+      return {};
+    update_interval: 60s
+  - platform: template
+    # For Debug only
+    name: "g_brightness"
+    internal: true
+    id: "text_g_brightness"
+    lambda: |-
+      return {};
+    update_interval: 60s  
+# Text Sensors to track attirbutes from HA (HA -> Panel)
+  - platform: homeassistant
+    name: "HA wled_test RGB"
+    id: wled_test_rgb
+    entity_id: light.wled_test
+    attribute: rgb_color
+    internal: true
+    on_value:
+      then:
+        - script.execute: ha_wled_test_update
+  - platform: homeassistant
+    id: climate_state
+    name: "Climate State"
+    entity_id: climate.shed
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (id(climate_state).state == "heat") { 
+             id(nspanel1).send_json_command_(0x84,"{\"ATCEnable\":1}");
+            } else {
+             id(nspanel1).send_json_command_(0x84,"{\"ATCEnable\":0}");
+            }
+
+script:
+  # Script to trigger basic HA Service with Service Name + Entity
+  # Service + Entity_id
+  - id: ha_service1
+    then:
+      - logger.log: "HA Service Script 1 Called"
+      - homeassistant.service:
+          service: !lambda return id(ha_service_name).state;
+          data:
+            entity_id: !lambda return id(ha_service_entityid).state;
+  # Service + Entity_id + Brightness
+  - id: ha_service2
+    then:
+      - logger.log: "HA Service Script 2 Called"
+      - homeassistant.service:
+          service: !lambda return id(ha_service_name).state;
+          data:
+            entity_id: !lambda return id(ha_service_entityid).state;
+            brightness: !lambda 'return id(g_brightness);'
+  # Service + Entity_id + Brightness + RGB
+  - id: ha_service3
+    then:
+      - logger.log: "HA Service Script 3 Called"
+      - homeassistant.service:
+          service: !lambda return id(ha_service_name).state;
+          data:
+            entity_name: !lambda 'return id(ha_service_entityid).state;'
+            brightness: !lambda 'return id(g_brightness);'
+            red: !lambda 'return to_string(id(g_rgb_r));'
+            green: !lambda 'return to_string(id(g_rgb_g));'
+            blue: !lambda 'return to_string(id(g_rgb_b));'
+  # Service + Entity_id + Temp (Climate Only)
+  - id: ha_service4
+    then:
+      - logger.log: "HA Service Script 4 Called"
+      - homeassistant.service:
+          service: !lambda return id(ha_service_name).state;
+          data:
+            entity_id: !lambda return id(ha_service_entityid).state;
+            temperature: !lambda 'return to_string(id(g_temperature));'
+            hvac_mode: "heat"
+  # Scripts to Update Panel with current HA Status
+  # Panel has 0-100 for Brightness, HA uses 0-255
+  - id: ha_dim_09_light_update
+    then:
+      - lambda: |-
+          if (id(dim_09_light).state) {
+            int i_brightness = int(id(dim_09_light_bright).state / 255 * 100); 
+            id(nspanel1).send_json_command_(0x86,"{\"id\":\"light7\",\"params\":{\"switch\":\"on\",\"ltype\":\"white\",\"white\":{\"br\":" + to_string(i_brightness) + "}}}");
+          } else {
+            id(nspanel1).send_json_command_(0x86,"{\"id\":\"light7\",\"params\":{\"switch\":\"off\"}}");
+          }
+
+  - id: ha_wled_test_update
+    # Decode RGB Attribute ((r,g,b) and send to panel
+    then:
+      - lambda: |-
+          if (id(wled_test_light).state) {
+            int i_brightness = int(id(wled_test_bright).state / 255 * 100); 
+            std::string s = id(wled_test_rgb).state;
+            int p1 = s.find(",");
+            int p2 = s.find(",",p1+1);
+            std::string r = s.substr(1, p1-1).erase(0,s.find_first_not_of(" ")); 
+            std::string g = s.substr(p1+2,p2-p1-2).erase(0,s.find_first_not_of(" ")); 
+            std::string b = s.substr(p2+2,s.length()-2).erase(0,s.find_first_not_of(" ")); 
+            id(nspanel1).send_json_command_(0x86,"{\"id\":\"wled_test\",\"params\":{\"switch\":\"on\",\"light_type\":1,\"mode\":1,\"bright\":" + to_string(i_brightness) + ",\"colorR\":" + to_string(r) + ",\"colorG\":" + to_string(g) + ",\"colorB\":" + to_string(b) + "}}");
+          } else {
+            id(nspanel1).send_json_command_(0x86,"{\"id\":\"wled_test\",\"params\":{\"switch\":\"off\"}}");
+          }
+  - id: ha_plug_09_update
+    then:
+      - lambda: |-
+          if(id(plug_09_switch).state) {
+            id(nspanel1).send_json_command_(0x86,"{\"id\":\"plug_09\",\"params\":{\"switch\":\"on\"}}");
+          } else {
+            id(nspanel1).send_json_command_(0x86,"{\"id\":\"plug_09\",\"params\":{\"switch\":\"off\"}}");
+          }
+  - id: nspanel_init
+    # Script to initialise panel on full power on (or when screen is powered on from ESP)
+    then:
+      # Setup Widgets - must send all 8
+      # Widget 1
+      - lambda: |-
+          id(nspanel1).send_json_command_(0x86,"{\"HMI_resources\":[{\"index\":1,\"ctype\":\"device\",\"id\":\"light7\",\"uiid\":52}]}"); id(nspanel1).send_json_command_(0x86,"{\"relation\":[{\"ctype\":\"device\",\"id\":\"light7\",\"name\":\"DIM09\",\"online\":1,\"params\":{\"switch\":\"off\",\"ltype\":\"white\",\"white\":{\"br\":0,\"ct\":0}}]}");
+      # Widget 2
+      - lambda: |-
+          id(nspanel1).send_json_command_(0x86,"{\"HMI_resources\":[{\"index\":2,\"ctype\":\"device\",\"id\":\"wled_test\",\"uiid\":33}]}");
+          id(nspanel1).send_json_command_(0x86,"{\"relation\":[{\"ctype\":\"device\",\"id\":\"wled_test\",\"name\":\"WLED\",\"online\":1,\"params\":{\"switch\":\"on\"}]}");
+      # Widget 3
+      - lambda: |-
+          id(nspanel1).send_json_command_(0x86,"{\"HMI_resources\":[{\"index\":3,\"ctype\":\"device\",\"id\":\"plug_09\",\"uiid\":1}]}");
+          id(nspanel1).send_json_command_(0x86,"{\"relation\":[{\"ctype\":\"device\",\"id\":\"plug_09\",\"name\":\"PLUG09\",\"online\":1,\"params\":{\"switch\":\"on\"}]}");
+      # Widget 4
+      - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"index\":4,\"type\":\"delete\"}");'
+      # Widget 5
+      - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"index\":5,\"type\":\"delete\"}");'
+      # Widget 6
+      - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"index\":6,\"type\":\"delete\"}");'
+      # Widget 7
+      - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"index\":7,\"type\":\"delete\"}");'
+      # Widget 8
+      - lambda: 'id(nspanel1).send_json_command_(0x86,"{\"index\":8,\"type\":\"delete\"}");'
+      # Update existing Entities / Widgets
+      - script.execute: ha_dim_09_light_update
+      - script.execute: ha_wled_test_update
+      - script.execute: ha_plug_09_update
+      # Setup Thermostat
+      - lambda: 'id(nspanel1).send_json_command_(0x84,"{\"HMI_ATCDevice\":{\"ctype\":\"device\",\"id\":\"climate\",\"outlet\":0,\"etype\":\"hot\"}}");'
+      - lambda: 'id(nspanel1).send_json_command_(0x84,"{\"ATCMode\":0}");'
+      # Update Thermostat On/Off
+      - lambda: |-
+          if (id(climate_state).state == "heat") { 
+           id(nspanel1).send_json_command_(0x84,"{\"ATCEnable\":1}");
+          } else {
+           id(nspanel1).send_json_command_(0x84,"{\"ATCEnable\":0}");
+          }
+      # Update Thermostat Temperature
+      - lambda: |-
+          if ( (int) id(climate_temp).state > 15 && (int) id(climate_temp).state < 32) {
+            id(nspanel1).send_json_command_(0x84,"{\"ATCExpect0\":" + to_string((int) id(climate_temp).state) + "}");
+          }
+  - id: nspanel_weather
+    # Grab weather status (JSON) from https://wttr.in
+    then:
+      - logger.log: "nspanel_weather started"
+      - lambda: |-
+          WiFiClientSecure client;
+          HTTPClient http;
+          int wicon,wicon_out;
+          std::string buffer;
+          // Disable certificate checking
+          client.setInsecure();
+          
+          ESP_LOGD("nspanel_weather", "Init Complete");
+          //use appropriate location - test in browser without "?format=j2" for normal output
+          http.begin(client,"wttr.in",443,"/ipswich?format=j2",true);
+          ESP_LOGD("nspanel_weather", "http.begin OK");
+
+          int httpCode = http.GET();
+          ESP_LOGD("nspanel_weather", "http.GET OK");
+
+          if (httpCode > 0) {
+            // http response received
+            ESP_LOGD("nspanel_weather", "HTTP response code is %i", httpCode);
+
+            if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+              // setup JSON object for HTTP response
+              DynamicJsonBuffer doc(4000);
+              JsonObject& root = doc.parseObject(http.getStream());
+              
+              if (root.containsKey("current_condition")) {
+                ESP_LOGD("nspanel_weather", "JSON Parse OK");
+
+                JsonArray& current = root["current_condition"];
+                JsonObject& current_0 = current[0];
+                JsonArray& weather = root["weather"];
+                JsonObject& weather_0 = weather[0];
+             
+                wicon = int(current_0["weatherCode"].as<signed int>());
+                ESP_LOGD("nspanel_weather", "weather code received: %i",wicon);
+                
+                // Translate wttr.in weather code to use correct nspanel icon
+                // Mapping from Tasmota nspanel.be code
+                wicon_out = 30; // Unknown / Default
+                if (wicon == 113) { wicon_out = 1; }  //    # Sunny      
+                if (wicon == 116) { wicon_out = 2; }  //    # PartlyCloudy   
+                if (wicon == 119) { wicon_out = 2; }  //    # Cloudy             
+                if (wicon == 122) { wicon_out = 7; }  //    # VeryCloudy           
+                if (wicon == 143) { wicon_out = 11; } //    # Fog                 
+                if (wicon == 176) { wicon_out = 40; } //    # LightShowers     
+                if (wicon == 179) { wicon_out = 24; } //    # LightSleetShowers 
+                if (wicon == 182) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 185) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 200) { wicon_out = 42; } //    # ThunderyShowers  
+                if (wicon == 227) { wicon_out = 20; } //    # LightSnow  
+                if (wicon == 230) { wicon_out = 22; } //    # HeavySnow        
+                if (wicon == 260) { wicon_out = 11; } //    # Fog                 
+                if (wicon == 263) { wicon_out = 40; } //    # LightShowers     
+                if (wicon == 266) { wicon_out = 40; } //    # LightRain      
+                if (wicon == 281) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 284) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 293) { wicon_out = 40; } //    # LightRain      
+                if (wicon == 296) { wicon_out = 40; } //    # LightRain      
+                if (wicon == 299) { wicon_out = 18; } //    # HeavyShowers      
+                if (wicon == 302) { wicon_out = 18; } //    # HeavyRain        
+                if (wicon == 305) { wicon_out = 18; } //    # HeavyShowers      
+                if (wicon == 308) { wicon_out = 18; } //    # HeavyRain        
+                if (wicon == 311) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 314) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 317) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 320) { wicon_out = 20; } //    # LightSnow  
+                if (wicon == 323) { wicon_out = 22; } //    # LightSnowShowers 
+                if (wicon == 326) { wicon_out = 22; } //    # LightSnowShowers 
+                if (wicon == 329) { wicon_out = 22; } //    # HeavySnow        
+                if (wicon == 332) { wicon_out = 22; } //    # HeavySnow        
+                if (wicon == 335) { wicon_out = 29; } //    # HeavySnowShowers   
+                if (wicon == 338) { wicon_out = 22; } //    # HeavySnow        
+                if (wicon == 350) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 353) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 356) { wicon_out = 18; } //    # HeavyShowers      
+                if (wicon == 359) { wicon_out = 18; } //    # HeavyRain        
+                if (wicon == 362) { wicon_out = 24; } //    # LightSleetShowers 
+                if (wicon == 365) { wicon_out = 24; } //    # LightSleetShowers 
+                if (wicon == 368) { wicon_out = 22; } //    # LightSnowShowers 
+                if (wicon == 371) { wicon_out = 29; } //    # HeavySnowShowers   
+                if (wicon == 374) { wicon_out = 24; } //    # LightSleetShowers 
+                if (wicon == 377) { wicon_out = 24; } //    # LightSleet        
+                if (wicon == 386) { wicon_out = 42; } //    # ThunderyShowers  
+                if (wicon == 389) { wicon_out = 42; } //    # ThunderyHeavyRain  
+                if (wicon == 392) { wicon_out = 42; } //    # ThunderySnowShowers
+                if (wicon == 395) { wicon_out = 29; } //    # HeavySnowShowers   
+                // Create JSON to update nspanel
+                // Weather Code for weather icon
+                // Current Temp = current_0["temp_C"]
+                // Temp range min = weather_0["mintempC"]
+                // Temp range max = weather_0["maxtempC"]
+                id(nspanel1).send_json_command_(0x81,"{\"HMI_weather\":" + to_string(wicon_out) + ",\"HMI_outdoorTemp\":{\"current\":" + current_0["temp_C"].as<const char*>() + ",\"range\":\"" + weather_0["mintempC"].as<const char*>() + "," + weather_0["maxtempC"].as<const char*>() + "\"}}");
+              } else {
+                ESP_LOGD("nspanel_weather", "Current Condition not found");
+              }
+            }              
+          }
+          
+
+
+        
