@@ -14,6 +14,14 @@ Huge thanks to both !
 
 Whilst in development the component can be included :-
 ```
+external_components:
+  - source: github://pr#2702
+    components: ["nspanel"]
+    refresh: 0s
+```
 
+With ESPHome version > 2022.1 you will be able to compile OK. If you're at a previous version you'll need the dev version of ESPHome.
 
-Many Thanks to both !
+### Defining Widgets
+
+This YAML demonstates defining Widgets directly via JSON i.e. not within the nspanel YAML config 
