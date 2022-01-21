@@ -8,7 +8,7 @@ It uses the wttr.in service to retrieve Weather Information
 
 The JSON protocol has been reverse engineered and docuements by Blakadder [here](https://blakadder.github.io/nspanel).
 
-The nspanel component was created by @jesserockz and amended to allow the direct 2-way JSON communication
+The nspanel component was created by [jesserockz](https://github.com/jesserockz) and amended to allow the direct 2-way JSON communication
 
 Huge thanks to both !
 
