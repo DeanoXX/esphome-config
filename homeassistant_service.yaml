@@ -1,0 +1,15 @@
+# ESPHome cant send the RGB values as an array so need an interim script.
+# Add to your HA YAML Config 
+
+set_light_on_rgb:
+  alias: ESPHome RGB light set
+  sequence:
+  - service: light.turn_on
+    target:
+      entity_id: '{{ entity_name }}'
+    data_template:
+      brightness: '{{ brightness }}'
+      rgb_color:
+      - '{{ red }}'
+      - '{{ green }}'
+      - '{{ blue }}'

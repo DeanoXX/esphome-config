@@ -35,7 +35,6 @@ Each Widget requires :-
  - The necessary sensors (binary_sensor/sensor/text_sensor) to monitor the current states and key attributes from HA. The relevent triggers for changes then need to update the panel via lambda 'id(nspanel).send_json_command calls. Either directly or via more scripts. The JSON can either be built via text - or use the arduiono JSON library to build an object. The message are simple enough (imo) that use of the direct text method is more intuitive in the YAML
  
  The flow for updating the panel in respone to touch changes is:
- 
   - State amended on panel by user
 	- JSON sent to ESPhome via "on_json_message" event
 	- ESPHome updates Home Assistant via service calls
