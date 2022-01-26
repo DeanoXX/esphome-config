@@ -32,12 +32,13 @@ Each Widget requires :-
    Typically this would be automations to call services on HA itself or elsewhere within the ESPhome YAML. I've minimised the lambda to simply check the contents of the received JSON - trying to keep the subsequent automations within ESPHome YAML. The message type (integer "type") and JSON (JSON object "root") are available in the lambdas.
  - The necessary sensors (binary_sensor/sensor/text_sensor) to monitor the current states and key attributes from HA. The relevent triggers for changes then need to update the panel via lambda 'id(nspanel).send_json_command calls. Either directly or via more scripts. The JSON can either be built via text - or use the arduiono JSON library to build an object. The message are simple enough (imo) that use of the direct text method is more intuitive in the YAML
  
- The flow for updating the panel in respone to touch changes is ->
+ The flow for updating the panel in respone to touch changes is:
+ 
   - State amended on panel by user
 	- JSON sent to ESPhome via "on_json_message" event
 	- ESPHome updates Home Assistant via service calls
 	- ESPHome state sensors react to entity state updates from HA
-	- State/Value change vents send json to update panel
+	- State/Value change events send json to update panel
 	
 	i.e. any changes made on the panel dont "stick" unless the change is seen on HA and refelcted back to the panel within a second or so. If the full loop doesnt complete, the changes made on the panel revert to the previous state. If you simply amend objects on ESPhome you would still need to reflect changes back from the ESPHome relevant entities - but without the need for HA service calls / sensors.
 	
