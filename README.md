@@ -42,5 +42,7 @@ Each Widget requires :-
 	i.e. any changes made on the panel dont "stick" unless the change is seen on HA and refelcted back to the panel within a second or so. If the full loop doesnt complete, the changes made on the panel revert to the previous state. If you simply amend objects on ESPhome you would still need to reflect changes back from the ESPHome relevant entities - but without the need for HA service calls / sensors.
 	
 	The thermostat operates very similair to widgets interacting with a climate entity on HA
+
+### Defining Weather
 	
 	The Weather is provided by the wttr.in JSON service mimicing the approach from Tasmota (and re-using blakadder's mapping of weather ICON between wttr.in and the available NSPanel states). note the vlaidation of the wttr.in https certificate has been disabled to simplify the request. If you need certificate validation on the ESP there are documented methods available.
