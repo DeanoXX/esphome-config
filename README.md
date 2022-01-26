@@ -22,6 +22,8 @@ external_components:
 
 With ESPHome version > 2022.1 you will be able to compile OK. If you're at a previous version you'll need the dev version of ESPHome.
 
+I have a youtube demo of some of the working widgets and thermostat..https://youtu.be/7T5r5sy_rpc
+
 ### Defining Widgets
 
 This YAML demonstates defining Widgets directly via JSON i.e. not within the nspanel YAML config.
